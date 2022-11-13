@@ -1,4 +1,5 @@
 ﻿using api.Data;
+using api.Events;
 using api.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,7 +10,7 @@ namespace api.Repositories
         Task<Client[]> Get();
         Task<Client[]> SearchClient(string name);
         Task Create(Client client);
-        Task Update(Client client);
+        Task Update(string id, Client client);
     }
 
     public class ClientRepository : IClientRepository
@@ -23,8 +24,29 @@ namespace api.Repositories
 
         public async Task Create(Client client)
         {
+            if (await dataContext.Clients.Where((x) => x.Id == client.Id).AnyAsync())
+            {
+                throw new ArgumentException($"Client {client.Id} already exists.");
+            }
+
             await dataContext.AddAsync(client);
             await dataContext.SaveChangesAsync();
+
+            // emit event 
+            var newClientEventData = new ClientEvent
+            {
+                Id = new Guid(),
+                ClientId = client.Id,
+                ClientFirstName = client.FirstName,
+                ClientLastName = client.LastName,
+                DateCreated = DateTime.Now
+            };
+
+            var newClientEventPub = new ClientEventPublisher();
+            var newClientEvent = new ClientEventSubscriber(newClientEventData, newClientEventPub);
+
+            newClientEventPub.NewClientEvent(newClientEventData);
+            
         }
 
         public Task<Client[]> Get()
@@ -34,8 +56,8 @@ namespace api.Repositories
 
         public Task<Client[]> SearchClient(string name)
         {
-            var clients = dataContext.Clients.Where(x => x.FirstName.Equals(name, StringComparison.OrdinalIgnoreCase) || 
-                x.LastName.Equals(name, StringComparison.OrdinalIgnoreCase))
+            var clients = dataContext.Clients.Where(x => x.FirstName.Contains(name, StringComparison.OrdinalIgnoreCase) || 
+                x.LastName.Contains(name, StringComparison.OrdinalIgnoreCase))
                 .Select(c => new Client
                 {
                     FirstName = c.FirstName,    
@@ -48,12 +70,12 @@ namespace api.Repositories
             return clients;
         }
 
-        public async Task Update(Client client)
+        public async Task Update(string id, Client client)
         {
-            var existingClient = await dataContext.Clients.FirstOrDefaultAsync(x => x.Id == client.Id);
+            var existingClient = await dataContext.Clients.FirstOrDefaultAsync(x => x.Id == id);
 
             if (existingClient == null)
-                return;
+                throw new ArgumentException($"Client {id} not found.");
 
             existingClient.FirstName = client.FirstName;
             existingClient.LastName = client.LastName;
@@ -62,6 +84,7 @@ namespace api.Repositories
 
             await dataContext.SaveChangesAsync();
         }
+
     }
 }
 
